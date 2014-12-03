@@ -13,12 +13,12 @@
 #define BLOCKSIZE 1024
 //#define BSize 32
 //#define QSize (BLOCKS*BLOCKSIZE)/BSize/32
-#define BSize 24
-#define QSize 16
+#define BSize 12
+#define QSize 32
 #define DATASIZE 32
 #define THREADS 32
 #define N (DATASIZE*DATASIZE)
-#define tasks 1024
+#define tasks 24
 
 #define imin(a, b) (a<=b?a:b)
 
@@ -46,8 +46,6 @@ int doneGPU;
 
 
 struct kernel_para_GPU{
-int *A, *B, *C;
-int size;
 int warpId;
 int baseId;
 int queueId;
@@ -56,20 +54,13 @@ int taskId;
 int funcId;
 };
 
-struct task_arg{
-volatile int doneHost;
-int doneGPU;
-};
-
-
 typedef struct {
 int contents[BSize][QSize]; // body of queue
-int first[BSize]; // position of first element
 int last[BSize]; // position of last element
 }queue;
 
-extern __global__ void deviceRT(volatile int *done, queue *warpQ, volatile struct kernel_para *para, struct kernel_para *taskArgs, struct kernel_para_GPU *warpPool, int totalwarps, volatile int *totalExecWarps);
-
+extern __global__ void deviceRT(volatile int *done, queue *warpQ, volatile struct kernel_para *para, volatile struct kernel_para *taskArgs, volatile struct kernel_para_GPU *warpPool, int totalwarps, volatile int *totalExecWarps);
+//extern __global__ void deviceRT(volatile int *done, volatile int *totalExecTasks, volatile kernel_para_GPU *warpPool, volatile struct kernel_para *taskBuffer, struct kernel_para *taskArgs, queue *warpQ);
 int ipow(int base, int exp)
 {
     int result = 1;
@@ -129,8 +120,8 @@ int main(int argc, char** argv){
 	checkCudaErrors(cudaMalloc(&paraBufferDev, BSize*sizeof(struct kernel_para)));
         checkCudaErrors(cudaHostAlloc(&paraBuffer, BSize*sizeof(struct kernel_para), NULL));
 	// warp Pool in device
-	checkCudaErrors(cudaMalloc(&warpPoolDev, totalwarps*sizeof(struct kernel_para)));
-	checkCudaErrors(cudaHostAlloc(&warpPool, totalwarps*sizeof(struct kernel_para), NULL));
+	checkCudaErrors(cudaMalloc(&warpPoolDev, totalwarps*sizeof(struct kernel_para_GPU)));
+	checkCudaErrors(cudaHostAlloc(&warpPool, totalwarps*sizeof(struct kernel_para_GPU), NULL));
 	// warp queue
 	checkCudaErrors(cudaMalloc(&warpQ, sizeof(queue)));
 	// para of tasks
@@ -198,7 +189,8 @@ int main(int argc, char** argv){
 	checkCudaErrors(cudaMemcpyAsync(warpPoolDev, warpPool, totalwarps*sizeof(struct kernel_para_GPU),cudaMemcpyHostToDevice, s1));
 	checkCudaErrors(cudaStreamSynchronize(s1));
 
-	deviceRT<<<BLOCKS,BLOCKSIZE,0, s2>>>(done, warpQ, paraBufferDev, taskArgsDev, warpPoolDev, totalwarps, totalExecWarpsDev);	
+	deviceRT<<<BLOCKS,BLOCKSIZE,0, s2>>>(doneDev, warpQ, paraBufferDev, taskArgsDev, warpPoolDev, totalwarps, totalExecWarpsDev);	     
+//	deviceRT<<<BLOCKS,BLOCKSIZE,0, s2>>>(doneDev, totalExecWarpsDev, warpPoolDev, paraBufferDev, taskArgsDev, warpQ);
 
 	printf("Enter task delivery\n");
 	// critical section
@@ -210,16 +202,7 @@ int main(int argc, char** argv){
 		for(int i = 0; i < BSize; i++){
 			if(paraBuffer[i].req == 0){
 //				printf("Host:%d, %d\n", i, j);
-				paraBuffer[i].A = taskArgs[j].A;
-				paraBuffer[i].B = taskArgs[j].B;
-				paraBuffer[i].C = taskArgs[j].C;
-//				printf("Host C address:%d, %p\n", j, taskArgs[j].C);
-				paraBuffer[i].size = taskArgs[j].size;
-				
-				paraBuffer[i].block = taskArgs[j].block;
-				paraBuffer[i].thread = taskArgs[j].thread;
 				paraBuffer[i].warp = THREADS/32;
-				paraBuffer[i].funcId = taskArgs[j].funcId;
 				paraBuffer[i].taskId = taskArgs[j].taskId;
 				paraBuffer[i].req = 1;
 				checkCudaErrors(cudaMemcpyAsync(&paraBufferDev[i], &paraBuffer[i] , sizeof(struct kernel_para),cudaMemcpyHostToDevice, s1));

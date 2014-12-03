@@ -6,8 +6,8 @@
 #define BLOCKSIZE 1024
 //#define BSize 32
 //#define QSize (BLOCKS*BLOCKSIZE)/BSize/32
-#define BSize 24
-#define QSize 16
+#define BSize 12
+#define QSize 32
 
 struct kernel_para{
 volatile int *A, *B, *C;
@@ -150,11 +150,13 @@ __global__ void deviceRT(volatile int *done, volatile int *totalExecTasks, volat
 
 #if 1			
 			if((threadIdx.x & 0x1f) == 0){
+#if 1
 				if((atomicSub((int*)&taskArgs[warpPool[warpIdx].taskId].doneGPU,1)) ==1){
 					taskArgs[warpPool[warpIdx].taskId].doneHost = 0;
 					atomicAdd((int*)&totalExecTasks[0],1);
 //					printf("Kernel:%d\n", *totalExecTasks);
 				}
+#endif
 				warpPool[warpIdx].warpId = 0;
 				warpQ->contents[warpPool[warpIdx].queueId][warpPool[warpIdx].locId] = 0;
 //				__threadfence();

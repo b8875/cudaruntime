@@ -13,10 +13,10 @@
 #define BLOCKSIZE 1024
 #define BSize 32
 #define QSize (BLOCKS*BLOCKSIZE)/BSize/32
-#define DATASIZE 128
-#define THREADS 128
+#define DATASIZE 32
+#define THREADS 32
 #define N (DATASIZE*DATASIZE)
-#define tasks 512
+#define tasks 1024
 
 #define imin(a, b) (a<=b?a:b)
 
@@ -196,7 +196,7 @@ int main(int argc, char** argv){
 	checkCudaErrors(cudaMemcpyAsync(warpPoolDev, warpPool, totalwarps*sizeof(struct kernel_para_GPU),cudaMemcpyHostToDevice, s1));
 	checkCudaErrors(cudaStreamSynchronize(s1));
 
-	deviceRT<<<BLOCKS,BLOCKSIZE,0, s2>>>(done, warpQ, paraBufferDev, taskArgsDev, warpPoolDev, totalwarps);	
+	deviceRT<<<BLOCKS,BLOCKSIZE,0, s2>>>(doneDev, warpQ, paraBufferDev, taskArgsDev, warpPoolDev, totalwarps);	
 
 	printf("Enter task delivery\n");
 	// critical section

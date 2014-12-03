@@ -10,15 +10,14 @@
 #include <helper_cuda.h>
 
 #define BLOCKS 12
-#define BLOCKSIZE 1024
-//#define BSize 32
-//#define QSize (BLOCKS*BLOCKSIZE)/BSize/32
-#define BSize 24
-#define QSize 16
-#define DATASIZE 64
-#define THREADS 64
+#define BLOCKSIZE 544
+#define BSize 12
+#define QSize 17
+#define SSize 128
+#define DATASIZE 512
+#define THREADS 512
 #define N (DATASIZE*DATASIZE)
-#define tasks 1024
+#define tasks 36
 
 #define imin(a, b) (a<=b?a:b)
 
@@ -32,7 +31,8 @@ return _ret_val_0;
 }
 
 struct kernel_para{
-volatile int *A, *B, *C;
+volatile int *A, *B;
+volatile int *C;
 volatile int size;
 volatile int block;
 volatile int thread;
@@ -47,16 +47,8 @@ int doneGPU;
 struct kernel_para_GPU{
 int warpId;
 int baseId;
-int queueId;
-int locId;
 int taskId;
-int funcId;
 };
-
-typedef struct {
-int contents[BSize][QSize]; // body of queue
-int last[BSize]; // position of last element
-}queue;
 
 int ipow(int base, int exp)
 {
@@ -72,40 +64,37 @@ int ipow(int base, int exp)
     return result;
 }
 
-extern __global__ void deviceRT(volatile int *done, volatile int *totalExecTasks, volatile kernel_para_GPU *warpPool, volatile struct kernel_para *taskBuffer, struct kernel_para *taskArgs, queue *warpQ);
+extern __global__ void deviceRT(volatile int *done, volatile int *totalExecTasks, struct kernel_para_GPU *warpPool, volatile struct kernel_para *taskBuffer, struct kernel_para *taskArgs, volatile int *exec);
 int main(int argc, char** argv){
         double startTime, endTime;
         int totalWarps = ((BLOCKSIZE*BLOCKS)/32);
 	cudaSetDevice(0);
         cudaDeviceReset();
 
-        cudaStream_t s1[BSize];
 	cudaStream_t s2;
 	cudaStream_t s3;
-	for(int i = 0; i < BSize; i++){
-	checkCudaErrors(cudaStreamCreate(&s1[i]));
-	}
 	checkCudaErrors(cudaStreamCreate(&s2));
 	checkCudaErrors(cudaStreamCreate(&s3));
 
 	// To interrupt the runtime
         int *done, *doneDev;
+	int *exec, *execDev;
 	int *totalExecTasks, *totalExecTasksDev;
-	struct kernel_para_GPU *warpPool, *warpPoolDev;
+//	int *totalScheTasks, *totalScheTasksDev;
+	struct kernel_para_GPU *warpPoolDev;
 	struct kernel_para *taskArgs, *taskArgsDev;
 	struct kernel_para *taskparaBuffer, *taskparaBufferDev;
 
-	// warp queue
-        queue *warpQ;
+//	checkCudaErrors(cudaHostAlloc(&totalScheTasks, sizeof(int), cudaHostAllocDefault));
+//        checkCudaErrors(cudaMalloc(&totalScheTasksDev, sizeof(int)));
+	checkCudaErrors(cudaHostAlloc(&exec, sizeof(int), cudaHostAllocDefault));
+        checkCudaErrors(cudaMalloc(&execDev, sizeof(int)));
 
-	// warp queue
-        checkCudaErrors(cudaMalloc(&warpQ, sizeof(queue)));
 
 	// done flag
         checkCudaErrors(cudaHostAlloc(&done, sizeof(int), cudaHostAllocDefault));
         checkCudaErrors(cudaMalloc(&doneDev, sizeof(int)));
 
-	checkCudaErrors(cudaHostAlloc(&warpPool, totalWarps*sizeof(struct kernel_para_GPU), cudaHostAllocDefault));
         checkCudaErrors(cudaMalloc(&warpPoolDev, totalWarps*sizeof(struct kernel_para_GPU)));
 
 	checkCudaErrors(cudaHostAlloc(&totalExecTasks, sizeof(int), cudaHostAllocDefault));
@@ -114,8 +103,8 @@ int main(int argc, char** argv){
 	checkCudaErrors(cudaHostAlloc(&taskArgs, tasks*sizeof(struct kernel_para), cudaHostAllocDefault));
         checkCudaErrors(cudaMalloc(&taskArgsDev, tasks*sizeof(struct kernel_para)));
 	
-	checkCudaErrors(cudaHostAlloc(&taskparaBuffer, BSize*sizeof(struct kernel_para), cudaHostAllocDefault));
-        checkCudaErrors(cudaMalloc(&taskparaBufferDev, BSize*sizeof(struct kernel_para)));
+	checkCudaErrors(cudaHostAlloc(&taskparaBuffer, BSize*SSize*sizeof(struct kernel_para), cudaHostAllocDefault));
+        checkCudaErrors(cudaMalloc(&taskparaBufferDev, BSize*SSize*sizeof(struct kernel_para)));
 
 	// input data
         int *aDev[tasks], *bDev[tasks], *cDev[tasks];
@@ -139,13 +128,6 @@ int main(int argc, char** argv){
         }
 
 
-	*done = 0;
-	*totalExecTasks = 0;
-
-	for(int i = 0; i < totalWarps; i++){
-		warpPool[i].warpId = 0;
-	}
-
 	for(int i = 0; i < tasks; i++){
                 checkCudaErrors(cudaMemcpyAsync(aDev[i], a[i] , N*sizeof(int),cudaMemcpyHostToDevice, s3));
                 checkCudaErrors(cudaMemcpyAsync(bDev[i], b[i] , N*sizeof(int),cudaMemcpyHostToDevice, s3));
@@ -162,7 +144,7 @@ int main(int argc, char** argv){
                 taskArgs[i].thread = THREADS;
                 taskArgs[i].warp = THREADS/32;
                 taskArgs[i].funcId = 1;
-                taskArgs[i].taskId = i;
+        //        taskArgs[i].taskId = i;
                 taskArgs[i].req = 1;
                 taskArgs[i].doneHost = 1;
                 taskArgs[i].doneGPU = THREADS/32;
@@ -170,36 +152,49 @@ int main(int argc, char** argv){
 
         }
 
-	for(int i = 0; i < BSize; i++){
+	for(int i = 0; i < (BSize*SSize); i++){
 		taskparaBuffer[i].req = 0;
 	}
+
+	*done = 0;
+	*exec = 0;
+        //*totalScheTasks = 0;
+        *totalExecTasks = 0;
+
+	checkCudaErrors(cudaMemcpyAsync(execDev, exec, sizeof(int), cudaMemcpyHostToDevice, s3));
 	checkCudaErrors(cudaMemcpyAsync(doneDev, done, sizeof(int), cudaMemcpyHostToDevice, s3));
 	checkCudaErrors(cudaMemcpyAsync(totalExecTasksDev, totalExecTasks, sizeof(int), cudaMemcpyHostToDevice, s3));
-	checkCudaErrors(cudaMemcpyAsync(warpPoolDev, warpPool, totalWarps*sizeof(struct kernel_para_GPU), cudaMemcpyHostToDevice, s3));
-	checkCudaErrors(cudaMemcpyAsync(taskparaBufferDev, taskparaBuffer, BSize*sizeof(struct kernel_para), cudaMemcpyHostToDevice, s3));
+//	checkCudaErrors(cudaMemcpyAsync(totalScheTasksDev, totalScheTasks, sizeof(int), cudaMemcpyHostToDevice, s3));
+	checkCudaErrors(cudaMemcpyAsync(taskparaBufferDev, taskparaBuffer, BSize*SSize*sizeof(struct kernel_para), cudaMemcpyHostToDevice, s3));
 	checkCudaErrors(cudaMemcpyAsync(taskArgsDev, taskArgs, tasks*sizeof(struct kernel_para), cudaMemcpyHostToDevice, s3));
 	checkCudaErrors(cudaStreamSynchronize(s3));
-	deviceRT<<<BLOCKS,BLOCKSIZE,0, s2>>>(doneDev, totalExecTasksDev, warpPoolDev, taskparaBufferDev, taskArgsDev, warpQ);
+	deviceRT<<<BLOCKS,BLOCKSIZE,0, s2>>>(doneDev, totalExecTasksDev, warpPoolDev, taskparaBufferDev, taskArgsDev, execDev);
+#if 1
 	// para delivery
 	int j = 0;
+	int c1 = 0;
 	startTime = my_timer();
 	while(j < tasks){
-		for(int i = 0; i < BSize; i++){
+		for(int i = 0; i < (SSize*BSize); i++){
 			if(taskparaBuffer[i].req == 0){
 				taskparaBuffer[i].warp = THREADS/32;
 				taskparaBuffer[i].req = 1;
-				taskparaBuffer[i].taskId = taskArgs[j].taskId;
+				taskparaBuffer[i].taskId = j;
+				//	printf("Host:%d, %d\n", i*BSize+j, t);
 				checkCudaErrors(cudaMemcpyAsync(&taskparaBufferDev[i], &taskparaBuffer[i], sizeof(struct kernel_para), cudaMemcpyHostToDevice, s3));
-				if(j == tasks) break;
 				j++;
+				if(j == tasks) break;
 			}
 		}
 		if(j == tasks) break;
-		checkCudaErrors(cudaMemcpyAsync(taskparaBuffer, taskparaBufferDev, BSize*sizeof(struct kernel_para), cudaMemcpyDeviceToHost, s3));
+		checkCudaErrors(cudaMemcpyAsync(taskparaBuffer, taskparaBufferDev, BSize*SSize*sizeof(struct kernel_para), cudaMemcpyDeviceToHost, s3));
 		checkCudaErrors(cudaStreamSynchronize(s3));
+		c1++;
 	}
 	endTime = my_timer();
         printf("Elapsed Time1:%lf sec.\n", (endTime-startTime));
+	printf("Iteration1:%d\n", c1);
+#endif
 
 #if 1
 	int all = 0;
@@ -208,15 +203,20 @@ int main(int argc, char** argv){
 		checkCudaErrors(cudaMemcpyAsync(totalExecTasks, totalExecTasksDev, sizeof(int), cudaMemcpyDeviceToHost, s3));
 		checkCudaErrors(cudaStreamSynchronize(s3));
 		all++;
-	//	if(all > 4000) break;
+		//if(all > 40000) break;
 	}
-//	checkCudaErrors(cudaStreamSynchronize(s1));
 	endTime = my_timer();
         printf("Elapsed Time2:%lf sec.\n", (endTime-startTime));
 	printf("Iterations:%d, %d\n", all, *totalExecTasks);
+
 #endif
+#if 1
+	*exec = 1;
+        checkCudaErrors(cudaMemcpyAsync(execDev, exec, sizeof(int), cudaMemcpyHostToDevice, s3));
 	*done = 1;
 	checkCudaErrors(cudaMemcpyAsync(doneDev, done, sizeof(int), cudaMemcpyHostToDevice, s3));
+
+#endif
 #if 1
 	  // copy back results of tasks
         for(int i=0; i<tasks; i++) {
@@ -237,10 +237,6 @@ int main(int argc, char** argv){
         }
 #endif
 
-	for(int i = 0; i < BSize; i++){
-		checkCudaErrors(cudaStreamDestroy(s1[i]));
-	}
-
 	 for(int i = 0; i < tasks; i++){
                 checkCudaErrors(cudaFreeHost(a[i]));
                 checkCudaErrors(cudaFreeHost(b[i]));
@@ -254,17 +250,19 @@ int main(int argc, char** argv){
 	cudaStreamDestroy(s3);
 
 	cudaFreeHost(done);
+	cudaFreeHost(exec);
 	cudaFreeHost(totalExecTasks);
-	cudaFreeHost(warpPool);
 	cudaFreeHost(taskArgs);
 	cudaFreeHost(taskparaBuffer);
+//	cudaFreeHost(totalScheTasks);
 
 	cudaFree(totalExecTasksDev);
+//	cudaFree(totalScheTasksDev);
 	cudaFree(warpPoolDev);
 	cudaFree(doneDev);
+	cudaFree(execDev);
 	cudaFree(taskArgsDev);
 	cudaFree(taskparaBufferDev);
-	checkCudaErrors(cudaFree(warpQ));
 	return 0;
 }
 

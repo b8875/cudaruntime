@@ -89,6 +89,7 @@ __global__ void deviceRT(volatile int *done, volatile int *totalExecTasks, volat
 					warp = taskBuffer[tid].warp;
 					while(warp > 0){
 						if(warpQ->contents[tid][warpQ->last[tid]] == 0){
+//							printf("Scheduling:%d, %d\n", taskBuffer[tid].taskId, tid);
 							warpPool[tid*QSize + warpQ->last[tid]].queueId = tid;
                                                         warpPool[tid*QSize + warpQ->last[tid]].locId = warpQ->last[tid];
 							warpQ->contents[tid][warpQ->last[tid]] = 1;
@@ -124,7 +125,7 @@ __global__ void deviceRT(volatile int *done, volatile int *totalExecTasks, volat
 			if(*done) return;
 			switch(taskArgs[warpPool[warpIdx].taskId].funcId){
 				case 1:
-//					if((threadIdx.x & 0x1f) == 0) printf("Before:%d\n", warpPool[warpIdx].taskId);
+			//		if((threadIdx.x & 0x1f) == 0) printf("Before:%d, %d\n", warpPool[warpIdx].taskId, warpPool[warpIdx].baseId);
 				MatMul_kernel((int*)taskArgs[warpPool[warpIdx].taskId].A, (int*)taskArgs[warpPool[warpIdx].taskId].B, (int*)taskArgs[warpPool[warpIdx].taskId].C, taskArgs[warpPool[warpIdx].taskId].size, taskArgs[warpPool[warpIdx].taskId].size, taskArgs[warpPool[warpIdx].taskId].size, warpPool[warpIdx].baseId);
 //                                      if((threadIdx.x & 0x1f) == 0) printf("After:%p\n", taskArgs[warpPool[warpIdx].taskId].C);
 				break;

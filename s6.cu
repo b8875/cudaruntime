@@ -13,12 +13,12 @@
 #define BLOCKSIZE 1024
 //#define BSize 32
 //#define QSize (BLOCKS*BLOCKSIZE)/BSize/32
-#define BSize 24
-#define QSize 16
-#define DATASIZE 32
-#define THREADS 32
+#define BSize 12
+#define QSize 32
+#define DATASIZE 256
+#define THREADS 256
 #define N (DATASIZE*DATASIZE)
-#define tasks 1
+#define tasks 1024
 
 #define imin(a, b) (a<=b?a:b)
 
@@ -182,8 +182,6 @@ int main(int argc, char** argv){
 	// para delivery
 	int j = 0;
 	int c1 = 0;
-//	int c2 = 0;
-//	int c3 = 0;
 	startTime = my_timer();
 	while(j < tasks){
 		for(int i = 0; i < BSize; i++){
@@ -194,7 +192,6 @@ int main(int argc, char** argv){
 //				printf("Host:%d\n", taskparaBuffer[i].taskId);
 				checkCudaErrors(cudaMemcpyAsync(&taskparaBufferDev[i], &taskparaBuffer[i], sizeof(struct kernel_para), cudaMemcpyHostToDevice, s3));
 				j++;
-//				c3 = 1;
 				if(j == tasks) break;
 			}
 		}
@@ -202,10 +199,6 @@ int main(int argc, char** argv){
 		if(j == tasks) break;
 		checkCudaErrors(cudaMemcpyAsync(taskparaBuffer, taskparaBufferDev, BSize*sizeof(struct kernel_para), cudaMemcpyDeviceToHost, s3));
 		checkCudaErrors(cudaStreamSynchronize(s3));
-//		if (c3 == 1){
-//			c2++;
-//		}
-//		c3 = 0;
 		c1++;
 	}
 	endTime = my_timer();
@@ -222,13 +215,13 @@ int main(int argc, char** argv){
 		all++;
 	//	if(all > 4000) break;
 	}
-//	checkCudaErrors(cudaStreamSynchronize(s1));
 	endTime = my_timer();
         printf("Elapsed Time2:%lf sec.\n", (endTime-startTime));
 	printf("Iterations:%d, %d\n", all, *totalExecTasks);
 #endif
 	*done = 1;
 	checkCudaErrors(cudaMemcpyAsync(doneDev, done, sizeof(int), cudaMemcpyHostToDevice, s3));
+	//checkCudaErrors(cudaStreamSynchronize(s3));
 #if 1
 	  // copy back results of tasks
         for(int i=0; i<tasks; i++) {
